@@ -1,12 +1,12 @@
 bl_info = {
     "name": "Multi-Audio Track Video Importer",
-    "author": "Jagard11 & Claude AI",
+    "author": "Parham Ettehadieh, Jagard11, RainOrigami",
     "version": (2, 0),
     "blender": (3, 0, 0),
     "location": "Video Sequence Editor > Sidebar > Multi-Audio",
-    "description": "Import video with all its audio tracks into a metastrip using FFmpeg. Auto-downloads static binaries.",
+    "description": "Import video with all its audio tracks into a metastrip using FFmpeg.",
     "category": "Sequencer",
-    "warning": "Steam installs of Blender may not work with this addon due to the way steam segregates blender from the rest of the system. Manually installing static versions of ffmpeg and ffprobe into the addon directory is recommended.",
+    "warning": "Steam installs of Blender may not work with this addon due to the way steam segregates blender from the rest of the system.",
     "doc_url": "",
 }
 
@@ -21,132 +21,13 @@ import shutil
 import re
 import time
 from bpy.props import StringProperty, CollectionProperty, BoolProperty, IntProperty, PointerProperty
-from bpy.types import Operator, Panel, PropertyGroup, AddonPreferences
-
-class MultiAudioImporterPreferences(AddonPreferences):
-    bl_idname = __name__
-
-    def draw(self, context):
-        layout = self.layout
-        
-        addon_dir = os.path.dirname(os.path.realpath(__file__))
-        ffprobe_path = os.path.join(addon_dir, "ffprobe")
-        ffmpeg_path = os.path.join(addon_dir, "ffmpeg")
-        
-        if os.path.isfile(ffprobe_path) and os.path.isfile(ffmpeg_path):
-            layout.label(text="✓ FFmpeg static binaries are installed and ready", icon='CHECKMARK')
-            layout.label(text=f"Location: {addon_dir}")
-        else:
-            layout.label(text="⚠ FFmpeg binaries not found", icon='ERROR')
-            layout.operator("multi_audio.download_ffmpeg", icon="IMPORT")
-        
-        layout.separator()
-        layout.operator("multi_audio.download_ffmpeg", text="Re-download FFmpeg Binaries", icon="FILE_REFRESH")
-
-def download_ffmpeg_static():
-    """Download and extract static FFmpeg binaries to addon directory"""
-    addon_dir = os.path.dirname(os.path.realpath(__file__))
-    
-    # URLs for static builds (johnvansickle.com provides reliable static builds)
-    ffmpeg_url = "https://johnvansickle.com/ffmpeg/builds/ffmpeg-git-amd64-static.tar.xz"
-    
-    try:
-        # Download to temp file
-        print("Downloading FFmpeg static binaries...")
-        temp_file = os.path.join(tempfile.gettempdir(), "ffmpeg-static.tar.xz")
-        
-        with urllib.request.urlopen(ffmpeg_url) as response:
-            with open(temp_file, 'wb') as f:
-                shutil.copyfileobj(response, f)
-        
-        print("Extracting FFmpeg binaries...")
-        
-        # Extract ffprobe and ffmpeg
-        with tarfile.open(temp_file, 'r:xz') as tar:
-            # Find the ffmpeg and ffprobe files in the archive
-            ffmpeg_member = None
-            ffprobe_member = None
-            
-            for member in tar.getmembers():
-                if member.name.endswith('/ffmpeg') and member.isfile():
-                    ffmpeg_member = member
-                elif member.name.endswith('/ffprobe') and member.isfile():
-                    ffprobe_member = member
-            
-            if not ffmpeg_member or not ffprobe_member:
-                raise Exception("Could not find ffmpeg or ffprobe in downloaded archive")
-            
-            # Extract to addon directory
-            ffmpeg_member.name = "ffmpeg"
-            ffprobe_member.name = "ffprobe"
-            
-            tar.extract(ffmpeg_member, addon_dir)
-            tar.extract(ffprobe_member, addon_dir)
-        
-        # Make executable
-        ffmpeg_path = os.path.join(addon_dir, "ffmpeg")
-        ffprobe_path = os.path.join(addon_dir, "ffprobe")
-        os.chmod(ffmpeg_path, 0o755)
-        os.chmod(ffprobe_path, 0o755)
-        
-        # Clean up temp file
-        os.remove(temp_file)
-        
-        print("FFmpeg static binaries installed successfully!")
-        return True
-        
-    except Exception as e:
-        print(f"Failed to download FFmpeg binaries: {e}")
-        return False
-
-class AUDIO_OT_DownloadFFmpeg(Operator):
-    bl_idname = "multi_audio.download_ffmpeg"
-    bl_label = "Download FFmpeg Static Binaries"
-    bl_description = "Download static FFmpeg and FFprobe binaries (required for this addon)"
-
-    def execute(self, context):
-        self.report({'INFO'}, "Downloading FFmpeg static binaries...")
-        
-        if download_ffmpeg_static():
-            self.report({'INFO'}, "FFmpeg binaries downloaded and installed successfully!")
-        else:
-            self.report({'ERROR'}, "Failed to download FFmpeg binaries. Check console for details.")
-            
-        return {'FINISHED'}
-
-def get_executable_path(executable_name):
-    """Get path to FFmpeg executable, downloading if necessary"""
-    addon_dir = os.path.dirname(os.path.realpath(__file__))
-    local_executable = os.path.join(addon_dir, executable_name)
-    
-    # Check if local copy exists and is executable
-    if os.path.isfile(local_executable) and os.access(local_executable, os.X_OK):
-        return local_executable
-    
-    # For ffmpeg/ffprobe, try to auto-download
-    if executable_name in ["ffmpeg", "ffprobe"]:
-        print(f"Local {executable_name} not found, attempting auto-download...")
-        if download_ffmpeg_static():
-            # Check again after download
-            if os.path.isfile(local_executable) and os.access(local_executable, os.X_OK):
-                return local_executable
-        
-        # If auto-download failed, show helpful error
-        raise FileNotFoundError(f"Could not find or download {executable_name}. Please use the addon preferences to manually download FFmpeg binaries.")
-    
-    # For other executables, return as-is
-    return executable_name
+from bpy.types import Operator, Panel, PropertyGroup
 
 def get_audio_tracks(video_path):
     """Scan video file for audio tracks using ffprobe"""
-    try:
-        ffprobe_exe = get_executable_path("ffprobe")
-    except FileNotFoundError as e:
-        return {"error": "ffprobe_not_found", "detail": str(e)}
-    
     command = [
-        ffprobe_exe, "-v", "error", "-select_streams", "a",
-        "-show_entries", "stream=index,duration,codec_name,channels,sample_rate:stream_tags=language",
+        "ffprobe", "-v", "error", "-select_streams", "a",
+        "-show_entries", "stream=index,duration,codec_name,channels,sample_rate:stream_tags=title",
         "-of", "json", video_path
     ]
 
@@ -244,7 +125,7 @@ def run_ffmpeg_with_progress(command, timeout, duration_seconds=None, operation_
 # Property group for each audio track (kept for compatibility)
 class AudioTrackItem(PropertyGroup):
     index: StringProperty(name="Index")
-    language: StringProperty(name="Language")
+    name: StringProperty(name="Name")
     selected: BoolProperty(name="Import", default=False)
 
 # UI panel in the Video Sequence Editor
@@ -258,7 +139,7 @@ class SEQUENCER_PT_MultiAudioImport(Panel):
         layout = self.layout
         
         # Check if we're in the sequence editor and have strips
-        if not context.scene.sequence_editor or not context.scene.sequence_editor.sequences:
+        if not context.scene.sequence_editor or not context.scene.sequence_editor.strips:
             layout.label(text="No sequences available", icon='INFO')
             return
             
@@ -266,13 +147,13 @@ class SEQUENCER_PT_MultiAudioImport(Panel):
         seq_editor = context.scene.sequence_editor
         selected_video_strips = []
         
-        for strip in seq_editor.sequences_all:
+        for strip in seq_editor.strips_all:
             if strip.select and strip.type in ['MOVIE', 'SOUND']:
                 if strip.type == 'MOVIE' or (strip.type == 'SOUND' and hasattr(strip, 'sound') and strip.sound.filepath):
                     selected_video_strips.append(strip)
         
         if not selected_video_strips:
-            layout.label(text="Select a video/movie strip", icon='INFO')
+            layout.label(text="Select a video strip", icon='INFO')
             layout.label(text="to extract additional audio tracks")
         elif len(selected_video_strips) > 1:
             layout.label(text="Select only one video strip", icon='ERROR')
@@ -321,7 +202,7 @@ class AUDIO_OT_ExtractAdditionalTracks(Operator):
         
         # Find selected video/audio strip
         selected_strip = None
-        for strip in seq_editor.sequences_all:
+        for strip in seq_editor.strips_all:
             if strip.select and strip.type in ['MOVIE', 'SOUND']:
                 if strip.type == 'MOVIE' or (strip.type == 'SOUND' and hasattr(strip, 'sound') and strip.sound.filepath):
                     if selected_strip is None:
@@ -376,17 +257,17 @@ class AUDIO_OT_ExtractAdditionalTracks(Operator):
                     stream_codec = stream_info.get("codec_name", "unknown")
                     stream_channels = stream_info.get("channels", "unknown")
                     stream_sample_rate = stream_info.get("sample_rate", "unknown")
-                    stream_lang_tags = stream_info.get("tags", {})
-                    stream_lang = stream_lang_tags.get("language", f"Track_{stream_index}")
+                    stream_tags = stream_info.get("tags", {})
+                    stream_title = stream_tags.get("title", f"Track_{stream_index}")
                     
-                    self.report({'INFO'}, f"Track {i}: index={stream_index}, lang={stream_lang}, duration={stream_duration}s, codec={stream_codec}, channels={stream_channels}, sample_rate={stream_sample_rate}")
+                    self.report({'INFO'}, f"Track {i}: index={stream_index}, name={stream_title}, duration={stream_duration}s, codec={stream_codec}, channels={stream_channels}, sample_rate={stream_sample_rate}")
                     
                     # Warn about potential empty/silent tracks
                     if stream_duration and stream_duration != "unknown":
                         try:
                             duration_float = float(stream_duration)
                             if duration_float < 1.0:
-                                self.report({'WARNING'}, f"Track {stream_index} ({stream_lang}) appears very short ({duration_float:.3f}s) - may be empty/silent")
+                                self.report({'WARNING'}, f"Track {stream_index} ('{stream_title}') appears very short ({duration_float:.3f}s) - may be empty/silent")
                         except:
                             pass
 
@@ -394,13 +275,11 @@ class AUDIO_OT_ExtractAdditionalTracks(Operator):
             wm.progress_update(20)
             self.report({'INFO'}, "Getting source file duration...")
             try:
-                ffprobe_exe = get_executable_path("ffprobe")
-                
                 file_size_mb = os.path.getsize(source_file) / (1024 * 1024)
                 
                 # Get video duration
                 video_info_command = [
-                    ffprobe_exe, "-v", "error", 
+                    "ffprobe", "-v", "error", 
                     "-show_entries", "format=duration",
                     "-of", "default=noprint_wrappers=1:nokey=1", source_file
                 ]
@@ -416,7 +295,7 @@ class AUDIO_OT_ExtractAdditionalTracks(Operator):
                 
                 # Get actual video FPS (crucial for accurate duration calculations)
                 video_fps_command = [
-                    ffprobe_exe, "-v", "error", "-select_streams", "v:0",
+                    "ffprobe", "-v", "error", "-select_streams", "v:0",
                     "-show_entries", "stream=r_frame_rate",
                     "-of", "default=noprint_wrappers=1:nokey=1", source_file
                 ]
@@ -474,7 +353,7 @@ class AUDIO_OT_ExtractAdditionalTracks(Operator):
                 self.report({'INFO'}, f"Using temporary extraction area starting at frame {temp_extraction_start}")
                 
                 # Find available channels for extraction  
-                occupied_channels = [s.channel for s in seq_editor.sequences_all]
+                occupied_channels = [s.channel for s in seq_editor.strips_all]
                 if occupied_channels:
                     max_channel = max(occupied_channels)
                     extraction_start_channel = max_channel + 1
@@ -495,8 +374,8 @@ class AUDIO_OT_ExtractAdditionalTracks(Operator):
                     wm.progress_update(audio_progress)
                     
                     stream_index = str(stream_info.get("index")) 
-                    stream_lang_tags = stream_info.get("tags", {})
-                    stream_lang = stream_lang_tags.get("language", f"Track_{stream_index}")
+                    stream_tags = stream_info.get("tags", {})
+                    stream_title = stream_tags.get("title", f"Track_{stream_index}")
                     stream_codec = stream_info.get("codec_name", "unknown")
 
                     # Use WAV format for universal compatibility instead of AAC
@@ -505,11 +384,9 @@ class AUDIO_OT_ExtractAdditionalTracks(Operator):
                     source_dir = os.path.dirname(source_file)
                     temp_path = os.path.join(source_dir, temp_audio_filename)
                     
-                    self.report({'INFO'}, f"Extracting additional audio track {stream_index} ({stream_lang}, {stream_codec}) [{i+1}/{len(additional_tracks)}]...")
+                    self.report({'INFO'}, f"Extracting additional audio track {stream_index} ('{stream_title}', {stream_codec}) [{i+1}/{len(additional_tracks)}]...")
                     
-                    try:
-                        ffmpeg_exe = get_executable_path("ffmpeg")
-                        
+                    try:                        
                         # Calculate precise duration from original strip's frame count
                         # Use actual video FPS instead of project FPS for accuracy
                         precise_duration_seconds = original_frame_final_duration / actual_video_fps
@@ -523,7 +400,7 @@ class AUDIO_OT_ExtractAdditionalTracks(Operator):
                         
                         # Extract audio track and convert to WAV PCM for universal compatibility
                         ffmpeg_command = [
-                            ffmpeg_exe, "-y", 
+                            "ffmpeg", "-y", 
                             "-ss", f"{strip_start_offset_seconds:.6f}",  # Seek BEFORE input for accuracy
                             "-i", source_file,
                             "-map", f"0:{stream_index}", 
@@ -556,7 +433,7 @@ class AUDIO_OT_ExtractAdditionalTracks(Operator):
                             # Verify extracted file duration with ffprobe for debugging
                             try:
                                 verify_command = [
-                                    ffprobe_exe, "-v", "error", 
+                                    "ffprobe", "-v", "error", 
                                     "-show_entries", "format=duration",
                                     "-of", "default=noprint_wrappers=1:nokey=1", temp_path
                                 ]
@@ -572,17 +449,17 @@ class AUDIO_OT_ExtractAdditionalTracks(Operator):
                             
                             # Special warning for very small files (likely silent/empty tracks)
                             if file_size_kb < 10:  # Less than 10KB is suspiciously small for real audio
-                                self.report({'WARNING'}, f"Track {stream_index} ({stream_lang}) extracted file is very small ({file_size_kb:.1f} KB)")
+                                self.report({'WARNING'}, f"Track {stream_index} ('{stream_title}') extracted file is very small ({file_size_kb:.1f} KB)")
                                 self.report({'WARNING'}, f"This track may be silent/empty but will still be included in the metastrip")
                         else:
                             self.report({'WARNING'}, f"Extracted audio file not found: {temp_path}")
                             continue
 
                         # Import the extracted audio to safe area on timeline
-                        audio_strip_name = f"Audio_{stream_lang}"
+                        audio_strip_name = f"Audio_{stream_title}"
                         
                         # Create the sound strip in safe extraction area  
-                        audio_strip = seq_editor.sequences.new_sound(
+                        audio_strip = seq_editor.strips.new_sound(
                             name=audio_strip_name,
                             filepath=temp_path,
                             channel=next_channel,
@@ -694,8 +571,6 @@ class MultiAudioProperties(PropertyGroup):
 
 # Register/unregister
 classes = (
-    MultiAudioImporterPreferences,
-    AUDIO_OT_DownloadFFmpeg,
     AudioTrackItem,
     SEQUENCER_PT_MultiAudioImport,
     AUDIO_OT_ExtractAdditionalTracks,
